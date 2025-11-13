@@ -1,7 +1,3 @@
-##This is my code for the forward and inverse kinematics of the Robotic Arm
-
-
-
 import sympy as sp
 import numpy as np
 import math
@@ -71,7 +67,7 @@ class MinimalSubscriber(Node):
         q4 = math.radians(q4_temp)
         
         
-        offset = math.radians(10.62)
+        offset = math.radians(79.38)
         
         
         A1 = np.array([
@@ -89,15 +85,15 @@ class MinimalSubscriber(Node):
         ])
         
         A3 = np.array([
-        	[math.cos(q2), -math.sin(q2), 0, 130.23*math.sin(q2+offset)],
-        	[math.sin(q2), math.cos(q2), 0, -130.23*math.cos(q2+offset)],
+        	[math.cos(-offset+q2), -math.sin(-offset+q2), 0, 130.23*math.cos(-offset+q2)],
+        	[math.sin(-offset+q2), math.cos(-offset+q2), 0, 130.23*math.sin(-offset+q2)],
         	[0, 0, 1, 0],
         	[0, 0, 0, 1]
         ])
         
         A4 = np.array([
-        	[math.cos(q3), -math.sin(q3), 0, 124*math.cos(q3)],
-        	[math.sin(q3), math.cos(q3), 0, 124*math.sin(q3)],
+        	[math.cos(offset+q3), -math.sin(offset+q3), 0, 124*math.cos(offset+q3)],
+        	[math.sin(offset+q3), math.cos(offset+q3), 0, 124*math.sin(offset+q3)],
         	[0, 0, 1, 0],
         	[0, 0, 0, 1]
         ])
