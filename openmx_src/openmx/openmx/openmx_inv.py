@@ -1,0 +1,155 @@
+#import dependencies
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Pose
+import math
+
+try:
+    from .openmx_params import get_robot_params
+except ImportError:
+    from openmx_params import get_robot_params
+
+from openmx_interfaces.srv import InverseKinematics
+
+class RobotInverseKinematics(Node):
+
+    def __init__(self):
+        super().__init__('robot_inv_kin')
+
+        # Create service server for inverse kinematics
+        self.srv = self.create_service(
+            InverseKinematics,
+            'inverse_kinematics',
+            self.inverse_kinematics_callback
+        )
+
+        # Get robot parameters
+        params = get_robot_params()
+        self.L0 = params['L0']
+        self.L1 = params['L1']
+        self.L2 = params['L2']
+        self.L3 = params['L3']
+        self.L4 = params['L4']
+        
+        self.get_logger().info('Inverse Kinematics Service Server started')
+
+    def inverse_kinematics_callback(self, request, response):
+        """
+        Service callback for inverse kinematics
+        Takes a Pose request and returns joint angles
+        """
+        # Extract position from request
+        x4 = request.pose.position.x
+        y4 = request.pose.position.y
+        z4 = request.pose.position.z
+        
+        # Extract pitch from quaternion
+        qx = request.pose.orientation.x
+        qy = request.pose.orientation.y
+        qz = request.pose.orientation.z
+        qw = request.pose.orientation.w
+        
+        pitch = math.atan2(2*(qw*qy - qz*qx), 1 - 2*(qx**2 + qy**2))
+        
+        self.get_logger().info(
+            f"IK Service called: x={x4:.4f}, y={y4:.4f}, z={z4:.4f}, pitch={math.degrees(pitch):.2f}°"
+        )
+
+        # Compute inverse kinematics
+        try:
+            # Theta 1: Base rotation
+            theta_1 = math.atan2(y4, x4)
+
+            # Project to 2D plane
+            r4 = math.sqrt(x4**2 + y4**2)
+            s4 = z4 - (self.L0 + self.L1)
+
+            # Account for end-effector orientation
+            r3 = r4 - self.L4 * math.cos(pitch)
+            s3 = s4 - self.L4 * math.sin(pitch)
+
+            # Check reachability
+            d_sq = r3**2 + s3**2
+            d = math.sqrt(d_sq)
+            reach_max = self.L2 + self.L3
+            reach_min = abs(self.L2 - self.L3)
+
+            if d > reach_max or d < reach_min:
+                response.success = False
+                response.message = f"Target unreachable! Distance={d:.4f}, Valid range=[{reach_min:.4f}, {reach_max:.4f}]"
+                self.get_logger().error(response.message)
+                return response
+            
+            # Theta 3
+            cos_theta3 = (d_sq - self.L2**2 - self.L3**2) / (2 * self.L2 * self.L3)
+
+            if abs(cos_theta3) > 1.0:
+                response.success = False
+                response.message = f"IK failed: cos(θ3) = {cos_theta3:.4f} (out of range)"
+                self.get_logger().error(response.message)
+                return response
+            
+            # Two solutions for theta3
+            theta_3_down = math.acos(cos_theta3)
+            theta_3_up = -theta_3_down
+
+            # Theta 2
+            beta = math.atan2(s3, r3)
+
+            # Using law of cosines for gamma
+            gamma = math.acos((self.L2**2 + d_sq - self.L3**2) / (2 * self.L2 * d))
+            theta_2_down = beta - gamma
+            theta_2_up = beta + gamma
+
+            # Theta 4: Wrist angle
+            theta_4_down = pitch - theta_2_down - theta_3_down
+            theta_4_up = pitch - theta_2_up - theta_3_up
+
+            # Convert to degrees
+            response.success = True
+            response.message = "IK solution found"
+            
+            # Solution 1 (elbow down)
+            response.theta1 = math.degrees(theta_1)
+            response.theta2 = math.degrees(theta_2_down)
+            response.theta3 = math.degrees(theta_3_down)
+            response.theta4 = math.degrees(theta_4_down)
+            
+            # Solution 2 (elbow up)
+            response.theta1_alt = math.degrees(theta_1)
+            response.theta2_alt = math.degrees(theta_2_up)
+            response.theta3_alt = math.degrees(theta_3_up)
+            response.theta4_alt = math.degrees(theta_4_up)
+
+            self.get_logger().info(
+                f"Solution 1: theta1={response.theta1:.2f}°, theta2={response.theta2:.2f}°, "
+                f"theta3={response.theta3:.2f}°, theta4={response.theta4:.2f}°"
+            )
+            self.get_logger().info(
+                f"Solution 2: theta1={response.theta1_alt:.2f}°, theta2={response.theta2_alt:.2f}°, "
+                f"theta3={response.theta3_alt:.2f}°, theta4={response.theta4_alt:.2f}°"
+            )
+
+        except Exception as e:
+            response.success = False
+            response.message = f"IK computation failed: {str(e)}"
+            self.get_logger().error(response.message)
+
+        return response
+
+
+def main(args=None):        #define main() function, initialize rclpy and this node
+    rclpy.init(args=args)
+
+    openmx_inv = RobotInverseKinematics()
+
+    rclpy.spin(openmx_inv)
+
+    # Destroy the node explicitly
+    # (optional - otherwise it will be done automatically
+    # when the garbage collector destroys the node object)
+    openmx_inv.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
