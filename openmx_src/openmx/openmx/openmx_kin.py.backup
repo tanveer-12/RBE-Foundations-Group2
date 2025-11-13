@@ -1,0 +1,211 @@
+#import dependencies
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Pose, Twist
+import math
+import numpy as np
+
+class RobotForwardKinematics(Node):
+
+    def __init__(self):     #class constructor
+        super().__init__('robot_kin')
+
+        #Forward kinematics subscriber
+        self.subscription = self.create_subscription(
+            Float32MultiArray,
+            'topicFWD',
+            self.listener_callback,
+            10)
+        self.subscription  #prevent unused variable warning
+
+
+#Forward Kinematics
+    def listener_callback(self, msg):
+        if len(msg.data) != 4:  #check for 4 values input. If not 4, shows error.
+            self.get_logger().error("Need 4 input values in degrees (theta_1, theta_2, theta_3, theta_4)")
+            return
+        
+        theta_1_deg, theta_2_deg, theta_3_deg, theta_4_deg = msg.data
+        self.get_logger().info(
+            f"Joint angles received (degrees): theta1 = {theta_1_deg}, theta2 = {theta_2_deg}, theta3 = {theta_3_deg}, theta4 = {theta_4_deg}."
+            )
+        joint_angles_rad = [math.radians(theta_1_deg), 
+                            math.radians(theta_2_deg), 
+                            math.radians(theta_3_deg),
+                            math.radians(theta_4_deg)]      #convert joint angles from degrees to radians
+        
+        dh_par = self.build_dh_par(joint_angles_rad)        #run build_dh_par() function
+
+        T, A_matrices = self.end_effector_pose(dh_par)      #run end_effector_pose() function
+
+        for i, A_i in enumerate(A_matrices, start=1):
+            self.get_logger().info(f'Transformation A_{i}: \n{A_i}')    #publish A_1, A_2, A_3 to console
+
+        self.get_logger().info(f'End effector pose (Homegeneous transformation): \n{T}')    #publish T to console
+
+
+    def build_dh_par(self, joint_angles_rad):       #Define the DH parameters for this specific robot
+        #Each row is [a, alpha, d, theta]
+        
+        theta_1, theta_2, theta_3, theta_4 = joint_angles_rad
+
+        # Linkage lengths (in meters)
+        L0 = 0.036076
+        L1 = 0.096326 - L0
+        L2V = 0.128000
+        L2H = 0.024000
+        L2 = math.sqrt(L2V**2 + L2H**2)
+        L3 = 0.124000
+        L4 = 0.133400
+
+        dh_par = [
+            [0, math.pi/2.0, L0 + L1, theta_1],
+            [L2, 0, 0, theta_2],
+            [L3, 0, 0, theta_3],
+            [L4, 0, 0, theta_4]
+        ]
+
+        return  dh_par
+
+
+    def dh_transform(self, a, alpha, d, theta):     #function to calculate generic A_i from DH parameters
+            ct = math.cos(theta)
+            st = math.sin(theta)
+            ca = math.cos(alpha)
+            sa = math.sin(alpha)
+
+            return np.array([
+                [ct, -st * ca,  st * sa, a * ct],
+                [st,  ct * ca, -ct * sa, a * st],
+                [0,       sa,      ca,      d],
+                [0,        0,       0,      1.0]
+            ])
+
+
+    def end_effector_pose(self, dh_par):        #function to calculate A_1, A_2, A_3, and T
+        T = np.eye(4)
+        A_matrices = []
+
+        for i, (a, alpha, d, theta) in enumerate(dh_par, start=1):
+            A_i = self.dh_transform(a, alpha, d, theta)
+            A_matrices.append(A_i)
+            T = T @ A_i
+        
+        return T, A_matrices
+    
+
+class RobotInverseKinematics(Node):
+
+    def __init__(self):     #class constructor
+        super().__init__('robot_kin')
+
+        #Inverse kinematics subscriber
+        self.inv_subscription = self.create_subscription(
+            Pose,
+            'topicINV',
+            self.listener_inv_callback,
+            10
+        )
+        self.inv_subscription
+
+    #Inverse Kinematics
+    def listener_inv_callback(self, msg):
+        x4 = msg.position.x
+        y4 = msg.position.y
+        z4 = msg.position.z
+        w = msg.position.w
+
+        # Linkage lengths (in meters)
+        L0 = 0.036076
+        L1 = 0.096326 - L0
+        L2V = 0.128000
+        L2H = 0.024000
+        L2 = math.sqrt(L2V**2 + L2H**2)
+        L3 = 0.124000
+        L4 = 0.133400
+
+        # See homework for detailed derivations
+        theta_1 = math.atan2(y4,x4)
+
+        r4 = math.sqrt(x4**2 + y4**2)
+        s4 = z4 - (L0 + L1)
+
+        r3 = r4 - L4*math.cos(w)
+        s3 = z4 - (L0 + L1) - L4*math.cos(w)
+
+        w3 = math.acos((r3**2 + s3**2 - L2**2 - L3**2)/(2*L2*L3))
+
+        b = math.acos((L2**2 + (r3**2 + s3**2)**2 - L3**2)/(2*L2*math.sqrt(r3**2 + s3**2)))
+
+        g = math.atan2(s3,r3)
+
+        w2 = g - b
+
+        w4 = w - w2 - w3
+
+        #D = (r**2 + s**2 - a2**2 - a3**2) / (2*a2*a3)
+
+        """
+        if abs(D) > 1.0:
+            self.get_logger().error("Target is unreachable.")       # Ensure (1-D^2) is positive
+            return
+        
+        # Solution 1 (elbow down)
+        theta_3_down = math.atan2(math.sqrt(1-D**2),D)
+        c3_down = math.cos(theta_3_down)
+        s3_down = math.sin(theta_3_down)
+        theta_2_down = math.atan2(s, r) - math.atan2(a3*s3_down, a2 + a3*c3_down)
+
+        #Solution 2 (elbow up)
+        theta_3_up = math.atan2(-math.sqrt(1-D**2),D)
+        c3_up = math.cos(theta_3_up)
+        s3_up = math.sin(theta_3_up)
+        theta_2_up = math.atan2(s, r) - math.atan2(a3*s3_up, a2 + a3*c3_up)
+        """
+        
+        # Convert to degrees
+        theta_1_deg = math.degrees(theta_1)
+        
+        """
+        theta_2_down_deg = math.degrees(theta_2_down)
+        theta_3_down_deg = math.degrees(theta_3_down)
+        
+        theta_2_up_deg = math.degrees(theta_2_up)
+        theta_3_up_deg = math.degrees(theta_3_up)
+        """
+
+        theta_2_deg = math.degrees(w2)
+        theta_3_deg = math.degrees(w3)
+        theta_4_deg = math.degrees(w4)
+
+        self.get_logger().info(
+            f"Inverse kinematics results:"
+        )
+        self.get_logger().info(
+            f"Solution 1 (degrees): theta1 = {theta_1_deg:.2f}, theta2 = {theta_2_deg:.2f}, theta3 = {theta_3_deg:.2f}, theta4 = {theta_4_deg:.2f}"
+        )
+        #self.get_logger().info(
+        #    f"Solution 2 (degrees): theta1 = {theta_1_deg:.2f}, theta2 = {theta_2_up_deg:.2f}, theta3 = {theta_3_up_deg:.2f}"
+        #)
+
+
+def main(args=None):        #define main() function, initialize rclpy and this node
+    rclpy.init(args=args)
+
+    openMX_fwd = RobotForwardKinematics()
+    openMX_inv = RobotInverseKinematics()
+
+    rclpy.spin(openMX_fwd)
+    rclpy.spin(openMX_inv)
+
+    # Destroy the node explicitly
+    # (optional - otherwise it will be done automatically
+    # when the garbage collector destroys the node object)
+    openMX_fwd.destroy_node()
+    openMX_inv.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

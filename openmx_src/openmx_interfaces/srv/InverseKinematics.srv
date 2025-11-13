@@ -1,0 +1,16 @@
+# Request: desired end effector pose
+geometry_msgs/Pose pose
+
+---
+
+# Response: joint angles (in degrees) and success flag
+bool success
+string message
+float64 theta1
+float64 theta2
+float64 theta3
+float64 theta4
+float64 theta1_alt
+float64 theta2_alt
+float64 theta3_alt
+float64 theta4_alt

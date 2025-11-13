@@ -1,0 +1,136 @@
+#import dependencies
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Pose, Twist
+import math
+import numpy as np
+
+try:
+    from .openmx_params import get_robot_params
+except ImportError:
+    from openmx_params import get_robot_params
+
+
+class RobotInverseKinematics(Node):
+
+    def __init__(self):     #class constructor
+        super().__init__('robot_inv_kin')
+
+        #Inverse kinematics subscriber
+        self.inv_subscription = self.create_subscription(
+            Pose,
+            'topicINV',
+            self.listener_inv_callback,
+            10
+        )
+        self.inv_subscription
+
+        # Get robot parameters
+        params = get_robot_params()
+        self.L0 = params['L0']
+        self.L1 = params['L1']
+        self.L2 = params['L2']
+        self.L3 = params['L3']
+        self.L4 = params['L4']
+        
+        self.get_logger().info('Inverse Kinematics Node started')
+
+    #Inverse Kinematics
+    def listener_inv_callback(self, msg):
+        x4 = msg.position.x
+        y4 = msg.position.y
+        z4 = msg.position.z
+        
+        # Extract pitch from quaternion
+        qx = msg.orientation.x
+        qy = msg.orientation.y
+        qz = msg.orientation.z
+        qw = msg.orientation.w
+        
+        pitch = math.atan2(2*(qw*qy - qz*qx), 1 - 2*(qx**2 + qy**2))
+        
+        self.get_logger().info(
+            f"Target position: x={x4:.4f}, y={y4:.4f}, z={z4:.4f}, pitch={math.degrees(pitch):.2f}°"
+        )
+
+        # See homework for detailed derivations
+        theta_1 = math.atan2(y4,x4)
+
+        r4 = math.sqrt(x4**2 + y4**2)
+        s4 = z4 - (self.L0 + self.L1)
+
+        r3 = r4 - self.L4*math.cos(pitch)
+        s3 = s4 - self.L4*math.sin(pitch)
+
+        # Check reachability
+        d_sq = r3**2 + s3**2
+        d = math.sqrt(d_sq)
+        reach_max = self.L2 + self.L3
+        reach_min = abs(self.L2 - self.L3)
+
+        if d > reach_max or d < reach_min:
+            self.get_logger().error(
+                f"Target unreachable! Distance={d:.4f}, Valid range=[{reach_min:.4f}, {reach_max:.4f}]"
+            )
+            return
+        
+        cos_theta3 = (d_sq - self.L2**2 - self.L3**2)/(2*self.L2*self.L3)
+
+        if abs(cos_theta3) > 1.0:
+            self.get_logger().error(f"IK failed: cos(θ3) = {cos_theta3:.4f} (out of range)")
+            return
+        
+        theta_3_down = math.acos(cos_theta3)
+        theta_3_up = -theta_3_down
+
+        beta = math.atan2(s3,r3)
+
+        gamma = math.acos((self.L2**2 + d_sq - self.L3**2)/(2*self.L2*d))
+        theta_2_down = beta - gamma
+        theta_2_up = beta + gamma
+
+        theta_4_down = pitch - theta_2_down - theta_3_down
+        theta_4_up = pitch - theta_2_up - theta_3_up
+
+                
+        # Convert to degrees
+        theta_1_deg = math.degrees(theta_1)
+        
+        
+        theta_2_down_deg = math.degrees(theta_2_down)
+        theta_3_down_deg = math.degrees(theta_3_down)
+        theta_4_down_deg = math.degrees(theta_4_down)
+        
+        theta_2_up_deg = math.degrees(theta_2_up)
+        theta_3_up_deg = math.degrees(theta_3_up)
+        theta_4_up_deg = math.degrees(theta_4_up)
+        
+
+        self.get_logger().info(
+            f"Inverse kinematics results:"
+        )
+        self.get_logger().info(
+            f"Solution 1 (degrees): theta1 = {theta_1_deg:.2f}, theta2 = {theta_2_down_deg:.2f}, theta3 = {theta_3_down_deg:.2f}, theta4 = {theta_4_down_deg:.2f}"
+        )
+        self.get_logger().info(
+            f"Solution 2 (degrees): theta1 = {theta_1_deg:.2f}, theta2 = {theta_2_up_deg:.2f}, theta3 = {theta_3_up_deg:.2f}, theta4 = {theta_4_up_deg:.2f}"
+        )
+
+
+def main(args=None):        #define main() function, initialize rclpy and this node
+    rclpy.init(args=args)
+
+    openmx_inv = RobotInverseKinematics()
+
+    rclpy.spin(openmx_inv)
+
+    # Destroy the node explicitly
+    # (optional - otherwise it will be done automatically
+    # when the garbage collector destroys the node object)
+    openmx_inv.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
