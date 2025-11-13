@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Pose
 import math
+import numpy as np
 
 try:
     from .openmx_params import get_robot_params
@@ -10,6 +11,7 @@ except ImportError:
     from openmx_params import get_robot_params
 
 from openmx_interfaces.srv import InverseKinematics
+
 
 class RobotInverseKinematics(Node):
 
@@ -43,13 +45,14 @@ class RobotInverseKinematics(Node):
         y4 = request.pose.position.y
         z4 = request.pose.position.z
         
-        # Extract pitch from quaternion
+        # Extract orientation from quaternion
         qx = request.pose.orientation.x
         qy = request.pose.orientation.y
         qz = request.pose.orientation.z
         qw = request.pose.orientation.w
         
-        pitch = math.atan2(2*(qw*qy - qz*qx), 1 - 2*(qx**2 + qy**2))
+        # Convert quaternion to Euler angles to extract pitch
+        roll, pitch, yaw = self.quaternion_to_euler(qx, qy, qz, qw)
         
         self.get_logger().info(
             f"IK Service called: x={x4:.4f}, y={y4:.4f}, z={z4:.4f}, pitch={math.degrees(pitch):.2f}°"
@@ -80,7 +83,7 @@ class RobotInverseKinematics(Node):
                 self.get_logger().error(response.message)
                 return response
             
-            # Theta 3
+            # Theta 3: Elbow angle
             cos_theta3 = (d_sq - self.L2**2 - self.L3**2) / (2 * self.L2 * self.L3)
 
             if abs(cos_theta3) > 1.0:
@@ -93,7 +96,7 @@ class RobotInverseKinematics(Node):
             theta_3_down = math.acos(cos_theta3)
             theta_3_up = -theta_3_down
 
-            # Theta 2
+            # Theta 2: Shoulder angle
             beta = math.atan2(s3, r3)
 
             # Using law of cosines for gamma
@@ -122,12 +125,12 @@ class RobotInverseKinematics(Node):
             response.theta4_alt = math.degrees(theta_4_up)
 
             self.get_logger().info(
-                f"Solution 1: theta1={response.theta1:.2f}°, theta2={response.theta2:.2f}°, "
-                f"theta3={response.theta3:.2f}°, theta4={response.theta4:.2f}°"
+                f"Solution 1 (elbow down): θ1={response.theta1:.2f}°, θ2={response.theta2:.2f}°, "
+                f"θ3={response.theta3:.2f}°, θ4={response.theta4:.2f}°"
             )
             self.get_logger().info(
-                f"Solution 2: theta1={response.theta1_alt:.2f}°, theta2={response.theta2_alt:.2f}°, "
-                f"theta3={response.theta3_alt:.2f}°, theta4={response.theta4_alt:.2f}°"
+                f"Solution 2 (elbow up): θ1={response.theta1_alt:.2f}°, θ2={response.theta2_alt:.2f}°, "
+                f"θ3={response.theta3_alt:.2f}°, θ4={response.theta4_alt:.2f}°"
             )
 
         except Exception as e:
@@ -137,19 +140,42 @@ class RobotInverseKinematics(Node):
 
         return response
 
+    def quaternion_to_euler(self, qx, qy, qz, qw):
+        """
+        Convert quaternion to Euler angles (roll, pitch, yaw)
+        """
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (qw * qx + qy * qz)
+        cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
 
-def main(args=None):        #define main() function, initialize rclpy and this node
+        # Pitch (y-axis rotation)
+        sinp = 2 * (qw * qy - qz * qx)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)
+        else:
+            pitch = math.asin(sinp)
+
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (qw * qz + qx * qy)
+        cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        return roll, pitch, yaw
+
+
+def main(args=None):
     rclpy.init(args=args)
-
     openmx_inv = RobotInverseKinematics()
 
-    rclpy.spin(openmx_inv)
+    try:
+        rclpy.spin(openmx_inv)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        openmx_inv.destroy_node()
+        rclpy.shutdown()
 
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
-    openmx_inv.destroy_node()
-    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
