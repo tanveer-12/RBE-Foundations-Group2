@@ -1,4 +1,3 @@
-#import dependencies
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
@@ -44,12 +43,23 @@ class RobotForwardKinematics(Node):
         params = get_robot_params()
         self.L0 = params['L0']
         self.L1 = params['L1']
-        self.L2 = params['L2']
+        # L2 should actually be L2V (vertical) in the params, but keeping for compatibility
+        # We need L2H for the horizontal offset
+        self.L2 = params.get('L2V', params.get('L2', 0.128))  # Vertical component
+        self.L2H = params.get('L2H', 0.024)  # Horizontal component
         self.L3 = params['L3']
         self.L4 = params['L4']
 
         self.get_logger().info('Forward Kinematics Node started')
         self.get_logger().info('Listening to joint_states and topicFWD')
+        self.get_logger().info('Using modified DH convention: negative theta = upward rotation')
+        self.get_logger().info(f'Robot parameters: L0={self.L0:.6f}, L1={self.L1:.6f}, L2V={self.L2:.6f}, L2H={self.L2H:.6f}, L3={self.L3:.6f}, L4={self.L4:.6f}')
+        
+        # Calculate expected zero configuration position
+        d1 = self.L0 + self.L1 + self.L2  # Total vertical height to Frame 1
+        x_zero = self.L2H + self.L3 + self.L4  # Total horizontal reach
+        z_zero = d1
+        self.get_logger().info(f'Expected zero config position: x={x_zero:.6f}, y=0.0, z={z_zero:.6f}')
 
     def listener_callback(self, msg):
         if len(msg.data) != 4:
@@ -126,15 +136,33 @@ class RobotForwardKinematics(Node):
     def build_dh_par(self, joint_angles_rad):
         theta_1, theta_2, theta_3, theta_4 = joint_angles_rad
         
+        # DH parameters for OpenManipulator-X
+        # Note: The robot uses a convention where negative joint angles 
+        # cause upward rotation. The dh_transform function negates theta
+        # to match the robot's actual behavior.
+        #
+        # Standard DH parameters:
+        # d1 = L0 + L1 + L2V (total vertical height to Frame 1)
+        # a2 = L2H (horizontal offset from Frame 1 to Joint 3)
+        # a3 = L3, a4 = L4
+        # alpha1 = +90° to transition from vertical to horizontal motion
+        
         dh_par = [
-            [0, math.pi/2.0, self.L0 + self.L1, theta_1],
-            [self.L2, 0, 0, theta_2],
-            [self.L3, 0, 0, theta_3],
-            [self.L4, 0, 0, theta_4]
+            [0, math.pi/2.0, self.L0 + self.L1 + self.L2, theta_1],  # d1 includes L2V
+            [self.L2H, 0, 0, theta_2],                                  # a2 = L2H
+            [self.L3, 0, 0, theta_3],                                   # a3 = L3
+            [self.L4, 0, 0, theta_4]                                    # a4 = L4
         ]
         return dh_par
 
     def dh_transform(self, a, alpha, d, theta):
+        """
+        Modified DH transformation to match robot's actual behavior
+        where negative theta values cause upward rotation
+        """
+        # Negate theta to match robot's convention
+        theta = -theta
+        
         ct = math.cos(theta)
         st = math.sin(theta)
         ca = math.cos(alpha)
