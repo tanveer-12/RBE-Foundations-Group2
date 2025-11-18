@@ -17,7 +17,7 @@ class RobotForwardKinematics(Node):
     def __init__(self):
         super().__init__('robot_fwd_kin')
 
-        # Forward kinematics subscriber (original)
+        # Forward kinematics subscriber
         self.subscription = self.create_subscription(
             Float32MultiArray,
             'topicFWD',
@@ -25,7 +25,7 @@ class RobotForwardKinematics(Node):
             10)
         self.subscription
 
-        # Joint states subscriber (from basic_robot_control)
+        # Joint states subscriber (to receive joint states from basic_robot_control)
         self.joint_states_subscription = self.create_subscription(
             JointState,
             'joint_states',
@@ -43,9 +43,7 @@ class RobotForwardKinematics(Node):
         params = get_robot_params()
         self.L0 = params['L0']
         self.L1 = params['L1']
-        # L2 should actually be L2V (vertical) in the params, but keeping for compatibility
-        # We need L2H for the horizontal offset
-        self.L2 = params.get('L2V', params.get('L2', 0.128))  # Vertical component
+        self.L2V = params.get('L2V', params.get('L2V', 0.128))  # Vertical component
         self.L2H = params.get('L2H', 0.024)  # Horizontal component
         self.L3 = params['L3']
         self.L4 = params['L4']
@@ -53,12 +51,12 @@ class RobotForwardKinematics(Node):
         self.get_logger().info('Forward Kinematics Node started')
         self.get_logger().info('Listening to joint_states and topicFWD')
         self.get_logger().info('Using standard DH convention with z0 pointing down')
-        self.get_logger().info(f'Robot parameters: L0={self.L0:.6f}, L1={self.L1:.6f}, L2V={self.L2:.6f}, L2H={self.L2H:.6f}, L3={self.L3:.6f}, L4={self.L4:.6f}')
+        self.get_logger().info(f'Robot parameters: L0={self.L0:.6f}, L1={self.L1:.6f}, L2V={self.L2V:.6f}, L2H={self.L2H:.6f}, L3={self.L3:.6f}, L4={self.L4:.6f}')
         
         # Calculate expected zero configuration position
         # d1 = L0 + L1 (to Joint 2), then L2V up, then L2H + L3 + L4 forward
         x_zero = self.L2H + self.L3 + self.L4  # Total horizontal reach
-        z_zero = self.L0 + self.L1 + self.L2  # Total vertical height (L2 = L2V in params)
+        z_zero = self.L0 + self.L1 + self.L2V  # Total vertical height
         self.get_logger().info(f'Expected zero config position: x={x_zero:.6f}, y=0.0, z={z_zero:.6f}')
 
     def listener_callback(self, msg):
@@ -151,33 +149,25 @@ class RobotForwardKinematics(Node):
         # Standard DH parameters: [a, alpha, d, theta]
         
         # Calculate offset angle
-        theta_0 = math.atan2(self.L2H, self.L2)  # L2 = L2V from params
+        theta_0 = math.atan2(self.L2H, self.L2V)
         
         # Link lengths (hypotenuse of L-shaped segments)
-        a2 = math.sqrt(self.L2**2 + self.L2H**2)  # ≈ 0.130 m
+        a2 = math.sqrt(self.L2V**2 + self.L2H**2)  # ≈ 0.130 m
         a3 = self.L3  # 0.124 m  
         a4 = self.L4  # 0.1334 m
         
         dh_par = [
-            [0,  math.pi/2.0, self.L0 + self.L1, theta_1],          # Link 1: d1=0.077+0.06025
-            [a2, 0,           0,                 theta_2 + theta_0], # Link 2: θ₂+θ₀, a=0.130
-            [a3, 0,           0,                 theta_3 - theta_0], # Link 3: θ₃-θ₀, a=0.124
-            [a4, 0,           0,                 theta_4]            # Link 4: a=0.1334
+            [0,  -math.pi/2.0, self.L0 + self.L1, theta_1],          # Link 1: d1=0.077+0.06025
+            [a2, 0,           0,                 theta_2 - (math.pi/2.0 - theta_0)], # Link 2: θ₂+θ₀, a=0.130
+            [a3, 0,           0,                 theta_3 + (math.pi/2.0 - theta_0)], # Link 3: θ₃-θ₀, a=0.124
+            [a4, math.pi/2.0, 0,                 theta_4]            # Link 4: a=0.1334
         ]
         return dh_par
 
-    def dh_transform(self, a, alpha, d, theta, negate_theta=False):
-        """
-        Standard DH transformation matrix
+    def dh_transform(self, a, alpha, d, theta):
         
-        Transformation order: Rot(z,θ) * Trans(z,d) * Trans(x,a) * Rot(x,α)
-        
-        Args:
-            negate_theta: If True, negate theta (for base joint with z pointing down)
-        """
-        if negate_theta:
-            theta = -theta
-        
+        # Standard DH transformation matrix
+                     
         ct = math.cos(theta)
         st = math.sin(theta)
         ca = math.cos(alpha)
@@ -196,9 +186,7 @@ class RobotForwardKinematics(Node):
         A_matrices = []
 
         for i, (a, alpha, d, theta) in enumerate(dh_par):
-            # Only negate theta for Link 1 (base rotation with z0 pointing down)
-            negate = (i == 0)
-            A_i = self.dh_transform(a, alpha, d, theta, negate_theta=negate)
+            A_i = self.dh_transform(a, alpha, d, theta)
             A_matrices.append(A_i)
             T = T @ A_i
         
@@ -230,8 +218,9 @@ class RobotForwardKinematics(Node):
         
         # Create quaternion representing orientation
         # Roll = 0, Pitch = pitch_rad, Yaw = theta_1
-        quaternion = self.euler_to_quaternion(0.0, pitch_rad, theta_1)
-        
+        #quaternion = self.euler_to_quaternion(0.0, pitch_rad, theta_1)
+        quaternion = self.tform_to_quaternion(T)
+
         pose_msg.orientation.x = quaternion[0]
         pose_msg.orientation.y = quaternion[1]
         pose_msg.orientation.z = quaternion[2]
@@ -246,6 +235,37 @@ class RobotForwardKinematics(Node):
             f'pitch={math.degrees(pitch_rad):.2f}°, '
             f'quat=[{quaternion[0]:.4f}, {quaternion[1]:.4f}, {quaternion[2]:.4f}, {quaternion[3]:.4f}]'
         )
+
+    def tform_to_quaternion(self, T):
+        trace = float(T[0,0]) + float(T[1,1]) + float(T[2,2])
+
+        if trace > 0:
+            S = math.sqrt(trace + 1.0) * 2.0
+            qw = 0.25 * S
+            qx = (T[2,1] - T[1,2]) / S
+            qy = (T[0,2] - T[2,0]) / S 
+            qz = (T[1,0] - T[0,1]) / S
+        elif ((T[0,0] > T[1,1])&(T[0,0] > T[2,2])):
+            S = math.sqrt(1.0 + T[0,0] - T[1,1] - T[2,2]) * 2
+            qw = (T[2,1] - T[1,2]) / S
+            qx = 0.25 * S
+            qy = (T[0,1] + T[1,0]) / S 
+            qz = (T[0,2] + T[2,0]) / S
+        elif (T[1,1] > T[2,2]):
+            S = math.sqrt(1.0 + T[1,1] - T[0,0] - T[2,2]) * 2
+            qw = (T[0,2] - T[2,0]) / S
+            qx = (T[0,1] + T[1,0]) / S 
+            qy = 0.25 * S
+            qz = (T[1,2] + T[2,1]) / S
+        else:
+            S = math.sqrt(1.0 + T[2,2] - T[0,0] - T[1,1]) * 2
+            qw = (T[1,0] - T[0,1]) / S
+            qx = (T[0,2] + T[2,0]) / S
+            qy = (T[1,2] + T[2,1]) / S
+            qz = 0.25 * S
+        
+        return [qx, qy, qz, qw]
+
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         """
