@@ -52,13 +52,13 @@ class RobotForwardKinematics(Node):
 
         self.get_logger().info('Forward Kinematics Node started')
         self.get_logger().info('Listening to joint_states and topicFWD')
-        self.get_logger().info('Using modified DH convention: negative theta = upward rotation')
+        self.get_logger().info('Using standard DH convention with z0 pointing down')
         self.get_logger().info(f'Robot parameters: L0={self.L0:.6f}, L1={self.L1:.6f}, L2V={self.L2:.6f}, L2H={self.L2H:.6f}, L3={self.L3:.6f}, L4={self.L4:.6f}')
         
         # Calculate expected zero configuration position
-        d1 = self.L0 + self.L1 + self.L2  # Total vertical height to Frame 1
+        # d1 = L0 + L1 (to Joint 2), then L2V up, then L2H + L3 + L4 forward
         x_zero = self.L2H + self.L3 + self.L4  # Total horizontal reach
-        z_zero = d1
+        z_zero = self.L0 + self.L1 + self.L2  # Total vertical height (L2 = L2V in params)
         self.get_logger().info(f'Expected zero config position: x={x_zero:.6f}, y=0.0, z={z_zero:.6f}')
 
     def listener_callback(self, msg):
@@ -136,38 +136,54 @@ class RobotForwardKinematics(Node):
     def build_dh_par(self, joint_angles_rad):
         theta_1, theta_2, theta_3, theta_4 = joint_angles_rad
         
-        # DH parameters for OpenManipulator-X
-        # Note: The robot uses a convention where negative joint angles 
-        # cause upward rotation. The dh_transform function negates theta
-        # to match the robot's actual behavior.
+        # DH parameters from research paper:
+        # "Kinematic Analysis for Trajectory Planning of Open-Source 4-DoF Robot Arm"
+        # Table I, Page 770
         #
-        # Standard DH parameters:
-        # d1 = L0 + L1 + L2V (total vertical height to Frame 1)
-        # a2 = L2H (horizontal offset from Frame 1 to Joint 3)
-        # a3 = L3, a4 = L4
-        # alpha1 = +90° to transition from vertical to horizontal motion
+        # KEY INSIGHT: The L-shaped link is handled with an OFFSET ANGLE θ₀
+        # θ₀ = arctan(L2H/L2V) = arctan(0.024/0.128) ≈ 10.62° (≈11°)
+        #
+        # The offset angle compensates for the L-shaped geometry:
+        # - Joint 2 angle is adjusted by -θ₀
+        # - Joint 3 angle is adjusted by +θ₀
+        # - Link lengths use the HYPOTENUSE of the L-shape
+        #
+        # Standard DH parameters: [a, alpha, d, theta]
+        
+        # Calculate offset angle
+        theta_0 = math.atan2(self.L2H, self.L2)  # L2 = L2V from params
+        
+        # Link lengths (hypotenuse of L-shaped segments)
+        a2 = math.sqrt(self.L2**2 + self.L2H**2)  # ≈ 0.130 m
+        a3 = self.L3  # 0.124 m  
+        a4 = self.L4  # 0.1334 m
         
         dh_par = [
-            [0, math.pi/2.0, self.L0 + self.L1 + self.L2, theta_1],  # d1 includes L2V
-            [self.L2H, 0, 0, theta_2],                                  # a2 = L2H
-            [self.L3, 0, 0, theta_3],                                   # a3 = L3
-            [self.L4, 0, 0, theta_4]                                    # a4 = L4
+            [0,  math.pi/2.0, self.L0 + self.L1, theta_1],          # Link 1: d1=0.077+0.06025
+            [a2, 0,           0,                 theta_2 + theta_0], # Link 2: θ₂+θ₀, a=0.130
+            [a3, 0,           0,                 theta_3 - theta_0], # Link 3: θ₃-θ₀, a=0.124
+            [a4, 0,           0,                 theta_4]            # Link 4: a=0.1334
         ]
         return dh_par
 
-    def dh_transform(self, a, alpha, d, theta):
+    def dh_transform(self, a, alpha, d, theta, negate_theta=False):
         """
-        Modified DH transformation to match robot's actual behavior
-        where negative theta values cause upward rotation
+        Standard DH transformation matrix
+        
+        Transformation order: Rot(z,θ) * Trans(z,d) * Trans(x,a) * Rot(x,α)
+        
+        Args:
+            negate_theta: If True, negate theta (for base joint with z pointing down)
         """
-        # Negate theta to match robot's convention
-        theta = -theta
+        if negate_theta:
+            theta = -theta
         
         ct = math.cos(theta)
         st = math.sin(theta)
         ca = math.cos(alpha)
         sa = math.sin(alpha)
 
+        # Standard DH transformation
         return np.array([
             [ct, -st * ca,  st * sa, a * ct],
             [st,  ct * ca, -ct * sa, a * st],
@@ -179,8 +195,10 @@ class RobotForwardKinematics(Node):
         T = np.eye(4)
         A_matrices = []
 
-        for a, alpha, d, theta in dh_par:
-            A_i = self.dh_transform(a, alpha, d, theta)
+        for i, (a, alpha, d, theta) in enumerate(dh_par):
+            # Only negate theta for Link 1 (base rotation with z0 pointing down)
+            negate = (i == 0)
+            A_i = self.dh_transform(a, alpha, d, theta, negate_theta=negate)
             A_matrices.append(A_i)
             T = T @ A_i
         
