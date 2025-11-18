@@ -29,117 +29,89 @@ class RobotInverseKinematics(Node):
         params = get_robot_params()
         self.L0 = params['L0']
         self.L1 = params['L1']
-        self.L2 = params['L2']
+        self.L2V = params.get('L2V', 0.128)  # Vertical component
+        self.L2H = params.get('L2H', 0.024)  # Horizontal component
         self.L3 = params['L3']
         self.L4 = params['L4']
         
+        # Calculate offset angle for L-shaped link (matches forward kinematics)
+        self.theta_0 = math.atan2(self.L2H, self.L2V)  # ~10.62 degrees
+        
+        # Link 2 effective length (hypotenuse of L-shaped segment)
+        self.L2 = math.sqrt(self.L2V**2 + self.L2H**2)
+        
         self.get_logger().info('Inverse Kinematics Service Server started')
-
+        self.get_logger().info(f'Robot parameters: L0={self.L0:.6f}, L1={self.L1:.6f}, L2V={self.L2V:.6f}, L2H={self.L2H:.6f}')
+        self.get_logger().info(f'Computed: L2={self.L2:.6f}, theta_0={math.degrees(self.theta_0):.2f}°, L3={self.L3:.6f}, L4={self.L4:.6f}')
+        
+    
     def inverse_kinematics_callback(self, request, response):
-        """
-        Service callback for inverse kinematics
-        Takes a Pose request and returns joint angles
-        """
-        # Extract position from request
+        
+        # Pose
         x4 = request.pose.position.x
         y4 = request.pose.position.y
         z4 = request.pose.position.z
-        
-        # Extract orientation from quaternion
+
         qx = request.pose.orientation.x
         qy = request.pose.orientation.y
         qz = request.pose.orientation.z
         qw = request.pose.orientation.w
-        
-        # Convert quaternion to Euler angles to extract pitch
-        roll, pitch, yaw = self.quaternion_to_euler(qx, qy, qz, qw)
-        
+
+        _, pitch, _ = self.quaternion_to_euler(qx, qy, qz, qw)
+
         self.get_logger().info(
-            f"IK Service called: x={x4:.4f}, y={y4:.4f}, z={z4:.4f}, pitch={math.degrees(pitch):.2f}°"
+            f"IK Request: x={x4:.4f}, y={y4:.4f}, z={z4:.4f}, pitch={math.degrees(pitch):.3f}°"
         )
 
-        # Compute inverse kinematics
         try:
-            # Theta 1: Base rotation
-            theta_1 = math.atan2(y4, x4)
 
-            # Project to 2D plane
-            r4 = math.sqrt(x4**2 + y4**2)
-            s4 = z4 - (self.L0 + self.L1)
+            offset = math.atan2(24,128)
 
-            # Account for end-effector orientation
-            r3 = r4 - self.L4 * math.cos(pitch)
-            s3 = s4 - self.L4 * math.sin(pitch)
+            # Wrist Center
+            x_wc = x4 - self.L4 * ( 1 - 2 * (qy**2 + qz**2))
+            y_wc = y4 - self.L4 * (2 * (qx*qy + qz*qw)) 
+            z_wc = z4 - self.L4 * (2 *(qx*qz - qy*qw))
 
-            # Check reachability
-            d_sq = r3**2 + s3**2
-            d = math.sqrt(d_sq)
-            reach_max = self.L2 + self.L3
-            reach_min = abs(self.L2 - self.L3)
+            #Theta 1
+            theta1 = math.atan2(y4,x4)
 
-            if d > reach_max or d < reach_min:
-                response.success = False
-                response.message = f"Target unreachable! Distance={d:.4f}, Valid range=[{reach_min:.4f}, {reach_max:.4f}]"
-                self.get_logger().error(response.message)
-                return response
-            
-            # Theta 3: Elbow angle
-            cos_theta3 = (d_sq - self.L2**2 - self.L3**2) / (2 * self.L2 * self.L3)
+            #Radial
+            R = math.sqrt(x_wc**2 + y_wc**2)
 
-            if abs(cos_theta3) > 1.0:
-                response.success = False
-                response.message = f"IK failed: cos(θ3) = {cos_theta3:.4f} (out of range)"
-                self.get_logger().error(response.message)
-                return response
-            
-            # Two solutions for theta3
-            theta_3_down = math.acos(cos_theta3)
-            theta_3_up = -theta_3_down
+            #Vert distance
+            H = z_wc - (self.L0 + self.L1)
 
-            # Theta 2: Shoulder angle
-            beta = math.atan2(s3, r3)
+            S = (R**2 + H**2 - self.L2**2 - self.L3**2) / (2 * self.L2 * self.L3)
 
-            # Using law of cosines for gamma
-            gamma = math.acos((self.L2**2 + d_sq - self.L3**2) / (2 * self.L2 * d))
-            theta_2_down = beta - gamma
-            theta_2_up = beta + gamma
+            phi = math.atan2(H,R)
 
-            # Theta 4: Wrist angle
-            theta_4_down = pitch - theta_2_down - theta_3_down
-            theta_4_up = pitch - theta_2_up - theta_3_up
+            psi = math.acos((self.L2**2 + R**2 + H**2 - self.L3**2) / (2 * self.L2 * math.sqrt(R**2 + H**2)))
 
-            # Convert to degrees
-            response.success = True
-            response.message = "IK solution found"
-            
-            # Solution 1 (elbow down)
-            response.theta1 = math.degrees(theta_1)
-            response.theta2 = math.degrees(theta_2_down)
-            response.theta3 = math.degrees(theta_3_down)
-            response.theta4 = math.degrees(theta_4_down)
-            
-            # Solution 2 (elbow up)
-            response.theta1_alt = math.degrees(theta_1)
-            response.theta2_alt = math.degrees(theta_2_up)
-            response.theta3_alt = math.degrees(theta_3_up)
-            response.theta4_alt = math.degrees(theta_4_up)
+            #Theta 2
+            theta2 = math.pi/2 - (phi - psi) - offset
+
+            theta3 = math.acos(S) + math.pi/2 - offset
+
+            theta4 = pitch - theta2 - theta3
+
+            response.theta1 = math.degrees(theta1)
+            response.theta2 = math.degrees(theta2)
+            response.theta3 = math.degrees(theta3)
+            response.theta4 = math.degrees(theta4)
 
             self.get_logger().info(
                 f"Solution 1 (elbow down): θ1={response.theta1:.2f}°, θ2={response.theta2:.2f}°, "
                 f"θ3={response.theta3:.2f}°, θ4={response.theta4:.2f}°"
-            )
-            self.get_logger().info(
-                f"Solution 2 (elbow up): θ1={response.theta1_alt:.2f}°, θ2={response.theta2_alt:.2f}°, "
-                f"θ3={response.theta3_alt:.2f}°, θ4={response.theta4_alt:.2f}°"
             )
 
         except Exception as e:
             response.success = False
             response.message = f"IK computation failed: {str(e)}"
             self.get_logger().error(response.message)
-
         return response
 
+
+    
     def quaternion_to_euler(self, qx, qy, qz, qw):
         """
         Convert quaternion to Euler angles (roll, pitch, yaw)
