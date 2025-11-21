@@ -1,6 +1,11 @@
 import math
 import numpy as np
 
+#==================================================#
+#       Take the q values from the robot here      #
+#==================================================#
+
+
 
 # Temp values to remove problems in VS Code
 offset = math.radians(10.62)
@@ -81,3 +86,10 @@ J = np.array([
    	[L1, L2, L3, L4],
    	[z_0, z_1, z_2, z_3],
 ])
+
+#====================================================================================================#
+#                                         V = J * q_dot                                              #
+#           q_dot = ((J^T * J)^-1 * J^T) * V + (I - ((J^T * J)^-1 * J^T) * J) * z_hat                #
+#====================================================================================================#
+
+#The q_dot formula is for a non-square J, in which ase we need to generalize the formula as shown in the presentations
