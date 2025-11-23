@@ -87,20 +87,20 @@ def compute_jacobian(self, q):
     return J
 
 
-    #====================================================================================================#
-    #                                         V = J * q_dot                                              #
-    #           q_dot = ((J^T * J)^-1 * J^T) * V + (I - ((J^T * J)^-1 * J^T) * J) * z_hat                #
-    #                   q_dot equation is taken from the notes for a generic system                      #
-    #      Null space does not exist for thise overdefined system, no the q_dot equation reduces to      #
-    #                               q_dot = ((J^T * J)^-1 * J^T) * V                                     #
-    #====================================================================================================#
+#====================================================================================================#
+#                                         V = J * q_dot                                              #
+#           q_dot = ((J^T * J)^-1 * J^T) * V + (I - ((J^T * J)^-1 * J^T) * J) * z_hat                #
+#                   q_dot equation is taken from the notes for a generic system                      #
+#      Null space does not exist for thise overdefined system, no the q_dot equation reduces to      #
+#                               q_dot = ((J^T * J)^-1 * J^T) * V                                     #
+#====================================================================================================#
 
 
-    # Need to figure out how q_dot can be defined or found here
-    # I was thinking (q_f-q_i)/t where t is some sampling time between the two measurements
-    # I dont know if joint velocities are something that we can measure directly from a topic
+# Need to figure out how q_dot can be defined or found here
+# I was thinking (q_f-q_i)/t where t is some sampling time between the two measurements
+# I dont know if joint velocities are something that we can measure directly from a topic
 
-    # Define the joint velocity inputs
+# Define the joint velocity inputs
 
 def joint_to_ee_vel_callback(self, request, response):
 
@@ -144,3 +144,4 @@ def ee_to_joint_vel_callback(self, request, response):
     response.success = True
 
     return response
+
