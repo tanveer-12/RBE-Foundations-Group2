@@ -1,14 +1,6 @@
 import math
 import numpy as np
 
-    #==================================================#
-    #       Take the q values from the robot here      #
-    #==================================================#
-
-
-
-    # Temp values to remove problems in VS Code
-    # Values need to be pulled from the 
 
 def compute_jacobian(self, q):
     offset = math.radians(10.62)
@@ -144,4 +136,5 @@ def ee_to_joint_vel_callback(self, request, response):
     response.success = True
 
     return response
+
 
