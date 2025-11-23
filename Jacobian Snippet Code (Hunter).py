@@ -9,11 +9,11 @@ import numpy as np
 
 # Temp values to remove problems in VS Code
 offset = math.radians(10.62)
-q1 = 1
-q2 = 1
-q3 = 1
-q4 = 1
-q5 = 1
+q1 = 0
+q2 = 0
+q3 = 0
+q4 = 0
+q5 = 0
 
 
 A1 = np.array([
@@ -93,3 +93,4 @@ J = np.array([
 #====================================================================================================#
 
 #The q_dot formula is for a non-square J, in which ase we need to generalize the formula as shown in the presentations
+
