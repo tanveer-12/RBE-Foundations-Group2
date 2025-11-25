@@ -14,27 +14,6 @@ TEAM MEMBERS (GROUP 2):
     - Tanveer Kaur
 
 ================================================================================
-EXECUTIVE SUMMARY
-================================================================================
-
-This module implements JACOBIAN-BASED VELOCITY KINEMATICS for a 4-degree-of-
-freedom (4-DOF) robotic manipulator. It provides bidirectional conversion 
-between joint velocities and end-effector velocities using the manipulator 
-Jacobian matrix.
-
-KEY FEATURES:
-    - Forward velocity kinematics: joint velocities → EE velocities
-    - Inverse velocity kinematics: EE velocities → joint velocities
-    - Analytical Jacobian computation using DH parameters
-    - Proper handling of the manipulator Jacobian pseudoinverse
-    - ROS2 service interface for real-time velocity transformations
-    - Comprehensive error handling and singularity detection
-
-ROBOT CONFIGURATION:
-    - 4 revolute joints (1 base rotation + 3 planar arm joints)
-    - Jacobian dimension: 6x4 (6-DOF velocity, 4-DOF joint space)
-
-================================================================================
 TECHNICAL OVERVIEW
 ================================================================================
 
@@ -88,11 +67,16 @@ import numpy as np
 
 # Import robot parameters
 try:
-    from .openmx_params import get_robot_params
+    from . import openmx_params
 except ImportError:
-    from openmx_params import get_robot_params
+    import openmx_params
 
+# Import custom service types (you'll need to create these)
+# For now, we'll define placeholder imports - you'll need to create the .srv files
 from openmx_interfaces.srv import JointToEEVelocity, EEToJointVelocity
+
+# Import sensor messages for joint state
+from sensor_msgs.msg import JointState
 
 
 class JacobianVelocityKinematics(Node):
@@ -110,23 +94,34 @@ class JacobianVelocityKinematics(Node):
     def __init__(self):
         super().__init__('jacobian_velocity_kinematics')
 
-        # Get robot parameters
-        params = get_robot_params()
-        self.L0 = params['L0']
-        self.L1 = params['L1']
-        self.L2 = params['L2']  # This is actually L2_total = sqrt(L2V^2 + L2H^2)
-        self.L3 = params['L3']
-        self.L4 = params['L4']
-        self.L2V = params['L2V']
-        self.L2H = params['L2H']
+        # Get robot parameters from openmx_params module
+        self.L0 = openmx_params.L0
+        self.L1 = openmx_params.L1
+        self.L2V = openmx_params.L2V  # Vertical component
+        self.L2H = openmx_params.L2H  # Horizontal component
+        self.L3 = openmx_params.L3
+        self.L4 = openmx_params.L4
         
         # Calculate the offset angle for the L-shaped link
         self.offset = math.atan2(self.L2H, self.L2V)  # ~10.62 degrees
         
         # Link lengths for DH parameters
-        self.a2 = self.L2  # ~0.130 m
+        self.a2 = math.sqrt(self.L2V**2 + self.L2H**2)  # ~0.130 m
         self.a3 = self.L3  # 0.124 m
         self.a4 = self.L4  # 0.1334 m
+
+        # Track current joint state from /joint_states topic
+        self.current_joint_positions = None
+        self.current_joint_velocities = None
+        self.joint_names = ['joint1', 'joint2', 'joint3', 'joint4']
+        
+        # Subscribe to joint states
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
 
         # Create service servers
         self.joint_to_ee_srv = self.create_service(
@@ -146,6 +141,29 @@ class JacobianVelocityKinematics(Node):
         self.get_logger().info(f'                  L2V={self.L2V:.6f}, L2H={self.L2H:.6f}')
         self.get_logger().info(f'                  L3={self.L3:.6f}, L4={self.L4:.6f}')
         self.get_logger().info(f'                  offset={math.degrees(self.offset):.2f}°')
+        self.get_logger().info('Subscribed to /joint_states for real-time velocity data')
+
+    def joint_state_callback(self, msg):
+        """
+        Callback to receive and store current joint states from the robot.
+        
+        Args:
+            msg (JointState): Joint state message containing positions, velocities, efforts
+        """
+        try:
+            # Extract positions and velocities for the first 4 joints
+            if len(msg.position) >= 4 and len(msg.velocity) >= 4:
+                self.current_joint_positions = list(msg.position[:4])
+                self.current_joint_velocities = list(msg.velocity[:4])
+                
+                # Log first reception
+                if not hasattr(self, '_joint_state_received'):
+                    self._joint_state_received = True
+                    self.get_logger().info(
+                        'Successfully receiving joint states from /joint_states'
+                    )
+        except Exception as e:
+            self.get_logger().error(f'Error processing joint state: {str(e)}')
 
     def dh_transform(self, a, alpha, d, theta):
         """
@@ -158,7 +176,7 @@ class JacobianVelocityKinematics(Node):
             theta: joint angle
             
         Returns:
-            4x4 homogeneous transformation matrix
+            4×4 homogeneous transformation matrix
         """
         ct = math.cos(theta)
         st = math.sin(theta)
@@ -189,14 +207,14 @@ class JacobianVelocityKinematics(Node):
             q: Joint configuration [θ1, θ2, θ3, θ4] in radians
             
         Returns:
-            J: 6x4 Jacobian matrix
+            J: 6×4 Jacobian matrix
         """
         q1, q2, q3, q4 = q
 
         # ====================================================================
         # Step 1: Compute DH transformation matrices
         # ====================================================================
-        # Match DH convention in openmx_fwd.py
+        # Using standard DH convention matching openmx_fwd.py
         
         # Link 1: Base rotation joint
         A1 = self.dh_transform(
@@ -259,7 +277,7 @@ class JacobianVelocityKinematics(Node):
         # Step 5: Compute Jacobian columns
         # ====================================================================
         # For revolute joints:
-        #   J_linear = z_{i-1} x (o_n - o_{i-1})
+        #   J_linear = z_{i-1} × (o_n - o_{i-1})
         #   J_angular = z_{i-1}
         
         # Joint 1: Base rotation
@@ -298,23 +316,59 @@ class JacobianVelocityKinematics(Node):
         Converts joint velocities to end-effector velocities using:
             V = J(q) * q_dot
         
+        If joint velocities are not provided in the request (all zeros or not specified),
+        the node will use the current joint velocities from /joint_states topic.
+        
         Args:
-            request: Contains q (joint positions) and q_dot (joint velocities)
+            request: Contains q (joint positions) and optionally q_dot (joint velocities)
             response: Populated with V (EE linear + angular velocity)
             
         Returns:
             response with success flag and computed velocities
         """
         try:
-            # Extract joint configuration and velocities from request
+            # Extract joint configuration from request
             q = np.array([request.q1, request.q2, request.q3, request.q4])
-            q_dot = np.array([request.q1_dot, request.q2_dot, 
-                             request.q3_dot, request.q4_dot])
+            
+            # Check if joint velocities are provided in request
+            q_dot_request = np.array([request.q1_dot, request.q2_dot, 
+                                     request.q3_dot, request.q4_dot])
+            
+            # Determine source of joint velocities
+            use_joint_states = np.allclose(q_dot_request, 0.0, atol=1e-9)
+            
+            if use_joint_states:
+                # Use velocities from /joint_states topic
+                if self.current_joint_velocities is None:
+                    response.success = False
+                    response.message = (
+                        "No joint velocities provided in request and no /joint_states "
+                        "data received yet. Either provide q_dot in request or ensure "
+                        "robot is publishing to /joint_states."
+                    )
+                    self.get_logger().error(response.message)
+                    return response
+                
+                q_dot = np.array(self.current_joint_velocities)
+                velocity_source = "/joint_states topic"
+                
+                self.get_logger().info(
+                    f"Using joint velocities from /joint_states (real-time robot data)"
+                )
+            else:
+                # Use velocities from request
+                q_dot = q_dot_request
+                velocity_source = "service request"
+                
+                self.get_logger().info(
+                    f"Using joint velocities from service request"
+                )
 
             self.get_logger().info(
                 f"Forward velocity request:\n"
                 f"  Joint positions (rad): {np.array2string(q, precision=4)}\n"
-                f"  Joint velocities (rad/s): {np.array2string(q_dot, precision=4)}"
+                f"  Joint velocities (rad/s): {np.array2string(q_dot, precision=4)}\n"
+                f"  Velocity source: {velocity_source}"
             )
 
             # Compute Jacobian at current configuration
@@ -331,7 +385,7 @@ class JacobianVelocityKinematics(Node):
             response.wy = float(V[4])
             response.wz = float(V[5])
             response.success = True
-            response.message = "Forward velocity kinematics computed successfully"
+            response.message = f"Forward velocity kinematics computed successfully (using {velocity_source})"
 
             self.get_logger().info(
                 f"  EE linear velocity (m/s): [{V[0]:.4f}, {V[1]:.4f}, {V[2]:.4f}]\n"
