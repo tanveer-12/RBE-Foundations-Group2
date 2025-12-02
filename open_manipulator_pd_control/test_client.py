@@ -2,7 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from open_manipulator_msgs.srv import SetJointPosition
+from open_manipulator_pd_control.srv import SetJointPosition
 from std_srvs.srv import SetBool
 import sys
 
