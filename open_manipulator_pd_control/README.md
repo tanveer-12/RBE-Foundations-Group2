@@ -16,8 +16,11 @@ ros2 run open_manipulator_pd_control pd_controller_node.py --ros-args -p kp:=5.0
 
 # 5. Run test 1
 ros2 run open_manipulator_pd_control test_client.py start_log
+
 ros2 run open_manipulator_pd_control test_client.py position 0.0
+
 sleep 10
+
 ros2 run open_manipulator_pd_control test_client.py stop_log
 
 # 6. Run test 2
