@@ -200,7 +200,7 @@ class PDControllerDirect(Node):
             
             # Adjust this scaling factor based on your needs
             # Higher value = more aggressive control
-            scale_factor = 200  # Start conservative
+            scale_factor = 50
             
             dynamixel_current = int(effort * scale_factor)
             dynamixel_current = np.clip(dynamixel_current, -1193, 1193)
