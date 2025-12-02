@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # Install Python scripts
 install(PROGRAMS
   pd_controller_node.py
+  pd_controller_direct.py
   test_client.py
   set_current_mode.py
   DESTINATION lib/${PROJECT_NAME}
