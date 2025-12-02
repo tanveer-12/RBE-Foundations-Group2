@@ -23,10 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 install(PROGRAMS
   pd_controller_node.py
   test_client.py
-  automated_test.py
-  plot_pd_results.py
   set_current_mode.py
-  helper.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -36,16 +33,9 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/
 )
 
-# Install MATLAB scripts and documentation
+# Install MATLAB script
 install(FILES
   plot_pd_results.m
-  README.md
-  QUICKSTART.md
-  PACKAGE_SUMMARY.md
-  STRUCTURE.md
-  TROUBLESHOOTING.md
-  FINAL_SUMMARY.md
-  INDEX.md
   DESTINATION share/${PROJECT_NAME}/
 )
 
