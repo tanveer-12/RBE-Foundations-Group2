@@ -8,6 +8,8 @@ colcon build --packages-select open_manipulator_pd_control
 source install/setup.bash
 
 # 2. Configure hardware
+pip3 install dynamixel-sdk
+
 python3 set_current_mode.py
 
 # 3. Launch robot
