@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 # Custom service for setting reference position
-from open_manipulator_msgs.srv import SetJointPosition
+from open_manipulator_pd_control.srv import SetJointPosition
 
 
 class PDControllerNode(Node):
