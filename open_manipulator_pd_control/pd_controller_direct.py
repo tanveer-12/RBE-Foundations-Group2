@@ -73,11 +73,15 @@ class PDControllerDirect(Node):
         self.DEVICENAME = '/dev/ttyUSB0'
         self.BAUDRATE = 1000000
         self.PROTOCOL_VERSION = 2.0
-        self.DXL_ID = 14  # Joint 4
+        
+        # All Dynamixel IDs
+        self.DXL_ID = 14  # Joint 4 (controlled with current)
+        self.OTHER_JOINT_IDS = [11, 12, 13, 15]  # Joint1, Joint2, Joint3, Gripper
         
         # Control table addresses for XM430
         self.ADDR_OPERATING_MODE = 11
         self.ADDR_TORQUE_ENABLE = 64
+        self.ADDR_GOAL_POSITION = 116
         self.ADDR_GOAL_CURRENT = 102
         self.ADDR_PRESENT_POSITION = 132
         self.ADDR_PRESENT_CURRENT = 126
@@ -95,22 +99,66 @@ class PDControllerDirect(Node):
             self.get_logger().error(f"Failed to set baudrate to {self.BAUDRATE}")
             raise Exception("Cannot set baudrate")
         
+        # === Setup Joint 4 (Current Control) ===
         # Verify operating mode
         mode, _, _ = self.packetHandler.read1ByteTxRx(
             self.portHandler, self.DXL_ID, self.ADDR_OPERATING_MODE
         )
         
         if mode != 0:
-            self.get_logger().error(f"Dynamixel is in mode {mode}, not current control mode (0)")
+            self.get_logger().error(f"Dynamixel ID {self.DXL_ID} is in mode {mode}, not current control mode (0)")
             self.get_logger().error("Please run: python3 set_current_mode.py")
             raise Exception("Wrong operating mode")
         
-        # Enable torque
+        # Enable torque for Joint 4
         self.packetHandler.write1ByteTxRx(
             self.portHandler, self.DXL_ID, self.ADDR_TORQUE_ENABLE, 1
         )
         
-        self.get_logger().info(f"Dynamixel ID {self.DXL_ID} initialized in current control mode")
+        self.get_logger().info(f"Joint 4 (ID {self.DXL_ID}) initialized in current control mode")
+        
+        # === Setup Other Joints (Position Hold) ===
+        self.get_logger().info("Locking other joints in position hold mode...")
+        
+        for joint_id in self.OTHER_JOINT_IDS:
+            try:
+                # Read current position
+                current_pos, _, _ = self.packetHandler.read4ByteTxRx(
+                    self.portHandler, joint_id, self.ADDR_PRESENT_POSITION
+                )
+                
+                # Check/Set operating mode to Position Control (mode 3)
+                current_mode, _, _ = self.packetHandler.read1ByteTxRx(
+                    self.portHandler, joint_id, self.ADDR_OPERATING_MODE
+                )
+                
+                if current_mode != 3:
+                    # Disable torque to change mode
+                    self.packetHandler.write1ByteTxRx(
+                        self.portHandler, joint_id, self.ADDR_TORQUE_ENABLE, 0
+                    )
+                    
+                    # Set to position control mode
+                    self.packetHandler.write1ByteTxRx(
+                        self.portHandler, joint_id, self.ADDR_OPERATING_MODE, 3
+                    )
+                
+                # Enable torque
+                self.packetHandler.write1ByteTxRx(
+                    self.portHandler, joint_id, self.ADDR_TORQUE_ENABLE, 1
+                )
+                
+                # Set goal position to current position (hold in place)
+                self.packetHandler.write4ByteTxRx(
+                    self.portHandler, joint_id, self.ADDR_GOAL_POSITION, current_pos
+                )
+                
+                self.get_logger().info(f"  Joint ID {joint_id}: Locked at position {current_pos}")
+                
+            except Exception as e:
+                self.get_logger().error(f"Failed to lock joint ID {joint_id}: {str(e)}")
+        
+        self.get_logger().info("All other joints locked in position hold mode")
     
     def read_joint_position(self):
         """Read current position directly from Dynamixel"""
@@ -283,13 +331,23 @@ class PDControllerDirect(Node):
         
         # Stop motor and close port
         try:
-            self.get_logger().info('Stopping motor...')
+            self.get_logger().info('Stopping Joint 4...')
+            # Stop Joint 4 (set current to 0)
             self.packetHandler.write2ByteTxRx(
                 self.portHandler, self.DXL_ID, self.ADDR_GOAL_CURRENT, 0
             )
+            
+            # Optionally disable torque on all joints for safety
+            self.get_logger().info('Releasing all joints...')
+            for joint_id in [self.DXL_ID] + self.OTHER_JOINT_IDS:
+                self.packetHandler.write1ByteTxRx(
+                    self.portHandler, joint_id, self.ADDR_TORQUE_ENABLE, 0
+                )
+            
             self.portHandler.closePort()
-        except:
-            pass
+            self.get_logger().info('Dynamixel port closed')
+        except Exception as e:
+            self.get_logger().error(f'Error during cleanup: {str(e)}')
         
         super().destroy_node()
 
