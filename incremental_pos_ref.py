@@ -43,10 +43,25 @@ INTEGRATION WITH JACOBIAN:
     5. Robot moves, creating velocity-like behavior
 
 ================================================================================
+UPDATE NOTES (2024)
+================================================================================
+
+FIXED: MultiThreadedExecutor Implementation
+    - Solves service call deadlock issue
+    - Prevents timeout errors with Jacobian service
+    - Allows control loop and service responses to run concurrently
+    
+IMPROVED: Async Jacobian Handling
+    - Non-blocking service calls
+    - Cached velocity results for smooth operation
+    - Better error handling and recovery
+
+================================================================================
 """
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Twist
 import numpy as np
@@ -55,8 +70,15 @@ import time
 # Import service for Jacobian inverse kinematics
 from openmx_interfaces.srv import EEToJointVelocity
 
-from open_manipulator_msgs.srv import SetJointPosition
-
+# Import service for sending position commands to robot
+# This may vary depending on your robot driver
+try:
+    from open_manipulator_msgs.srv import SetJointPosition
+    USING_OPEN_MANIPULATOR = True
+except ImportError:
+    # Fallback if open_manipulator_msgs not available
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    USING_OPEN_MANIPULATOR = False
 
 class IncrementalPositionController(Node):
     """
@@ -72,6 +94,8 @@ class IncrementalPositionController(Node):
         q_ref(t + Δt) = q_ref(t) + q̇_desired · Δt
     
     This creates smooth velocity-like motion on position-controlled hardware.
+    
+    FIXED: Now uses MultiThreadedExecutor to prevent service call deadlock.
     """
 
     def __init__(self):
@@ -82,7 +106,7 @@ class IncrementalPositionController(Node):
         # ====================================================================
         
         # Control loop frequency (Hz)
-        self.declare_parameter('control_rate', 100.0)
+        self.declare_parameter('control_rate', 50.0)  # Reduced from 100 Hz
         self.control_rate = self.get_parameter('control_rate').value
         self.dt = 1.0 / self.control_rate  # Sampling time
         
@@ -119,6 +143,11 @@ class IncrementalPositionController(Node):
         self.last_cmd_time = self.get_clock().now()
         self.cmd_timeout = 1.0  # Stop if no command for 1 second
         
+        # Jacobian service caching (for async operation)
+        self._last_q_dot = np.zeros(4)  # Last computed joint velocities
+        self._jacobian_pending = False  # Flag for pending request
+        self._jacobian_request_time = self.get_clock().now()
+        
         # ====================================================================
         # ROS2 Communication
         # ====================================================================
@@ -146,8 +175,10 @@ class IncrementalPositionController(Node):
         )
         
         # Wait for Jacobian service
+        self.get_logger().info('Waiting for Jacobian service...')
         while not self.jacobian_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for Jacobian service...')
+            self.get_logger().info('  Still waiting for /ee_to_joint_velocity service...')
+        self.get_logger().info('✓ Jacobian service found')
         
         # Setup robot command interface (varies by robot)
         self.setup_robot_interface()
@@ -173,6 +204,8 @@ class IncrementalPositionController(Node):
         self.get_logger().info('Theory: q_ref = q_ref_old + delta_q · delta_t')
         self.get_logger().info('        Converts velocities to position increments')
         self.get_logger().info('')
+        self.get_logger().info('FIXED: Using MultiThreadedExecutor (no deadlock)')
+        self.get_logger().info('')
         self.get_logger().info('Send Twist messages to /cmd_vel_cartesian to control robot')
         self.get_logger().info('=' * 70)
 
@@ -190,8 +223,10 @@ class IncrementalPositionController(Node):
             
             self.get_logger().info('Using OpenManipulator SetJointPosition service')
             
+            self.get_logger().info('Waiting for robot command service...')
             while not self.robot_cmd_client.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info('Waiting for robot command service...')
+                self.get_logger().info('  Still waiting for /goal_joint_space_path service...')
+            self.get_logger().info('✓ Robot command service found')
         else:
             # Generic robots use JointTrajectory messages
             self.robot_cmd_pub = self.create_publisher(
@@ -216,7 +251,7 @@ class IncrementalPositionController(Node):
                 if self.q_ref is None:
                     self.q_ref = self.current_q.copy()
                     self.get_logger().info(
-                        f'Initialized q_ref to current position: '
+                        f'✓ Initialized q_ref to current position: '
                         f'{np.array2string(self.q_ref, precision=3)}'
                     )
             
@@ -270,6 +305,8 @@ class IncrementalPositionController(Node):
         Uses Jacobian inverse kinematics service:
             q_dot = J⁺(q) · V
         
+        IMPROVED: Now uses async service calls with caching to prevent deadlock.
+        
         Returns:
             np.array: Desired joint velocities [rad/s] or None if failed
         """
@@ -277,7 +314,20 @@ class IncrementalPositionController(Node):
         if np.linalg.norm(self.desired_ee_velocity) < 1e-6:
             return np.zeros(4)
         
-        # Call Jacobian service
+        # If request already pending, use cached result
+        if self._jacobian_pending:
+            # Check if request is too old (>1.0s = serious problem)
+            age = (self.get_clock().now() - self._jacobian_request_time).nanoseconds / 1e9
+            if age > 1.0:
+                self.get_logger().warn(
+                    f'Jacobian request timeout ({age:.1f}s), resetting'
+                )
+                self._jacobian_pending = False
+            else:
+                # Request still pending, use last known result
+                return self._last_q_dot
+        
+        # Create new async request
         request = EEToJointVelocity.Request()
         
         # Use current reference position for Jacobian computation
@@ -286,34 +336,57 @@ class IncrementalPositionController(Node):
         request.wx, request.wy, request.wz = self.desired_ee_velocity[3:]
         
         try:
-            # Synchronous call (blocks until response)
+            # Make async call (NON-BLOCKING)
+            self._jacobian_pending = True
+            self._jacobian_request_time = self.get_clock().now()
+            
             future = self.jacobian_client.call_async(request)
+            future.add_done_callback(self._handle_jacobian_response)
             
-            # Wait for result with timeout
-            rclpy.spin_until_future_complete(self, future, timeout_sec=0.01)
+            # Return last known value immediately
+            # This allows control loop to continue without blocking
+            return self._last_q_dot
             
-            if future.done():
-                response = future.result()
-                
-                if response.success:
-                    q_dot = np.array([
-                        response.q1_dot,
-                        response.q2_dot,
-                        response.q3_dot,
-                        response.q4_dot
-                    ])
-                    
-                    return q_dot
-                else:
-                    self.get_logger().warn(f'Jacobian failed: {response.message}')
-                    return None
-            else:
-                self.get_logger().warn('Jacobian service call timeout')
-                return None
-                
         except Exception as e:
             self.get_logger().error(f'Error calling Jacobian service: {str(e)}')
+            self._jacobian_pending = False
             return None
+
+    def _handle_jacobian_response(self, future):
+        """
+        Callback to handle async Jacobian service response.
+        
+        This runs in a separate thread thanks to MultiThreadedExecutor.
+        
+        Args:
+            future: Future object containing service response
+        """
+        self._jacobian_pending = False
+        
+        try:
+            response = future.result()
+            
+            if response.success:
+                # Update cached joint velocities
+                self._last_q_dot = np.array([
+                    response.q1_dot,
+                    response.q2_dot,
+                    response.q3_dot,
+                    response.q4_dot
+                ])
+                
+                self.get_logger().debug(
+                    f'Jacobian updated: q_dot = '
+                    f'{np.array2string(self._last_q_dot, precision=4)}'
+                )
+            else:
+                self.get_logger().warn(f'Jacobian failed: {response.message}')
+                # Keep using last valid q_dot
+                
+        except Exception as e:
+            self.get_logger().error(f'Error processing Jacobian response: {str(e)}')
+            import traceback
+            self.get_logger().error(traceback.format_exc())
 
     def apply_safety_limits(self, q_dot):
         """
@@ -424,7 +497,7 @@ class IncrementalPositionController(Node):
         
         Implements the complete velocity control pipeline:
         1. Check if control should be active
-        2. Compute joint velocities via Jacobian
+        2. Compute joint velocities via Jacobian (async)
         3. Integrate to get position reference
         4. Send to robot
         """
@@ -452,6 +525,7 @@ class IncrementalPositionController(Node):
         
         # Step 1: Compute joint velocities from desired EE velocity
         #         q_dot = J⁺(q) · V
+        #         (Now async - uses cached result while waiting)
         q_dot_desired = self.compute_joint_velocities()
         
         if q_dot_desired is None:
@@ -499,14 +573,28 @@ class IncrementalPositionController(Node):
 
 
 def main(args=None):
-    """Main entry point."""
+    """
+    Main entry point.
+    
+    FIXED: Now uses MultiThreadedExecutor to prevent service call deadlock.
+    """
     rclpy.init(args=args)
     
     try:
         controller = IncrementalPositionController()
         
-        # Spin to handle callbacks
-        rclpy.spin(controller)
+        # Use MultiThreadedExecutor instead of default SingleThreadedExecutor
+        # This allows control loop and service callbacks to run concurrently
+        executor = MultiThreadedExecutor(num_threads=4)
+        executor.add_node(controller)
+        
+        controller.get_logger().info('')
+        controller.get_logger().info('Using MultiThreadedExecutor with 4 threads')
+        controller.get_logger().info('Ready to receive velocity commands!')
+        controller.get_logger().info('')
+        
+        # Spin with multi-threaded executor
+        executor.spin()
         
     except KeyboardInterrupt:
         pass
