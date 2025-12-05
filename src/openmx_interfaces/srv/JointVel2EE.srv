@@ -1,0 +1,24 @@
+# Service for converting joint velocities to end-effector velocities
+# Forward velocity kinematics: V = J(q) * q_dot
+
+# Request: Joint configuration and joint velocities
+float64 q1          # Joint 1 position (rad)
+float64 q2          # Joint 2 position (rad)
+float64 q3          # Joint 3 position (rad)
+float64 q4          # Joint 4 position (rad)
+float64 q1_dot      # Joint 1 velocity (rad/s)
+float64 q2_dot      # Joint 2 velocity (rad/s)
+float64 q3_dot      # Joint 3 velocity (rad/s)
+float64 q4_dot      # Joint 4 velocity (rad/s)
+
+---
+
+# Response: End-effector linear and angular velocities
+float64 vx          # EE linear velocity x-component (m/s)
+float64 vy          # EE linear velocity y-component (m/s)
+float64 vz          # EE linear velocity z-component (m/s)
+float64 wx          # EE angular velocity x-component (rad/s)
+float64 wy          # EE angular velocity y-component (rad/s)
+float64 wz          # EE angular velocity z-component (rad/s)
+bool success        # True if computation succeeded
+string message      # Status message or error description

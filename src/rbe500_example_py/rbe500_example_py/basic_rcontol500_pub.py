@@ -1,0 +1,132 @@
+import sympy as sp
+import numpy as np
+import math
+import rclpy
+from rclpy.node import Node
+
+from std_msgs.msg import Float32MultiArray
+
+
+class MinimalSubscriber(Node):
+
+    def __init__(self):
+        super().__init__('minimal_subscriber')
+        self.fk_subscription = self.create_subscription(
+            Float32MultiArray,
+            '/fk_input',
+            self.fk_callback,
+            10)
+        self.ik_subscription = self.create_subscription(
+            Float32MultiArray,
+            '/ik_input',
+            self.ik_callback,
+            10)
+        ##self.subscription  # prevent unused variable warning
+        
+##===========================Inverse Kinematics Section===================================##
+
+    def ik_callback(self, msg):
+	
+	#Map the publisher data(disired end position) to x, y, and z values
+        x, y, z = msg.data
+        
+        A = math.sqrt(x**2+y**2)
+        B = z+37.074
+        R1 = 130.23
+        R2 = 124
+        alpha = math.radians(10.62)
+        M = math.sqrt(A**2+B**2)
+        K = (A**2+B**2+R1**2-R2**2)/(2*R1)
+        phi = math.atan2(B, A)
+        
+        u = math.asin(K/M) - phi
+        #u = math.pi - math.asin(K/M) - phi
+        
+        v = math.atan2(R1*math.cos(u)-B, A-R1*math.sin(u))
+        q2 = u - alpha
+        q3 = v - u + alpha
+        q4 = math.radians(90) - q2 - q3
+        q1 = math.atan(y/x)
+	
+
+        #Output the values calculated for q1, q2, and q3
+        self.get_logger().info(f"q1 = {math.degrees(q1)}, q2 ={math.degrees(q2)}, q3 = {math.degrees(q3)}, q4 = {math.degrees(q4)}")
+
+
+
+##===========================Forward Kinematics Section===================================##
+
+    def fk_callback(self, msg):
+    
+  	#Map the publisher inputs to q1, q2, and q3
+        q1_temp, q2_temp, q3_temp, q4_temp = msg.data
+        
+        q1 = math.radians(q1_temp)
+        q2 = math.radians(q2_temp)
+        q3 = math.radians(q3_temp)
+        q4 = math.radians(q4_temp)
+        
+        
+        offset = math.radians(79.38)
+        
+        
+        A1 = np.array([
+        	[1, 0, 0, 0],
+        	[0, 1, 0, 0],
+        	[0, 0, 1, 36.076],
+        	[0, 0, 0, 1]
+        ])
+        
+        A2 = np.array([
+        	[math.cos(q1), 0, -math.sin(q1), 0],
+        	[math.sin(q1), 0, math.cos(q1), 0],
+        	[0, -1, 0, 60.25],
+        	[0, 0, 0, 1]
+        ])
+        
+        A3 = np.array([
+        	[math.cos(-offset+q2), -math.sin(-offset+q2), 0, 130.23*math.cos(-offset+q2)],
+        	[math.sin(-offset+q2), math.cos(-offset+q2), 0, 130.23*math.sin(-offset+q2)],
+        	[0, 0, 1, 0],
+        	[0, 0, 0, 1]
+        ])
+        
+        A4 = np.array([
+        	[math.cos(offset+q3), -math.sin(offset+q3), 0, 124*math.cos(offset+q3)],
+        	[math.sin(offset+q3), math.cos(offset+q3), 0, 124*math.sin(offset+q3)],
+        	[0, 0, 1, 0],
+        	[0, 0, 0, 1]
+        ])
+        
+        A5 = np.array([
+        	[math.cos(q4), -math.sin(q4), 0, 133.4*math.cos(q4)],
+        	[math.sin(q4), math.cos(q4), 0, 133.4*math.sin(q4)],
+        	[0, 0, 1, 0],
+        	[0, 0, 0, 1]
+        ])
+        
+        
+	#Defining the overall transform matrix for a given set of q values
+        H = A1 @ A2 @ A3 @ A4 @ A5
+        
+        #Output the homogeneous transform matrix. The rotation matrix and translation vector within this matrix indicate the pose of the end effector.
+        self.get_logger().info(f"\n{H}")
+
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    minimal_subscriber = MinimalSubscriber()
+
+    rclpy.spin(minimal_subscriber)
+
+    # Destroy the node explicitly
+    # (optional - otherwise it will be done automatically
+    # when the garbage collector destroys the node object)
+    minimal_subscriber.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
