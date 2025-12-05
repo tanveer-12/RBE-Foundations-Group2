@@ -71,8 +71,6 @@ try:
 except ImportError:
     import openmx_params
 
-# Import custom service types (you'll need to create these)
-# For now, we'll define placeholder imports - you'll need to create the .srv files
 from openmx_interfaces.srv import JointVel2EE, EE2JointVel
 
 # Import sensor messages for joint state
@@ -292,24 +290,7 @@ class JacobianVelocityKinematics(Node):
         # Joint 1: Base rotation
         J_v1 = np.cross(z_0, o_n)
         J_w1 = z_0
-
-        ## Fix ##
-        # Joint 1: Base rotation
-        # J_v1 = np.cross(z_0, o_n) # Original: [-ony, onx, 0]
-        
-        # # --- POTENTIAL FIX: SWAP X and Y terms to match base frame ---
-        # # If your DH frame 0 definition is non-standard
-        # # This will make J_v1 = [onx, -ony, 0]
-        # J_v1_fixed = np.array([
-        #     J_v1[1],  # X component is now the original Y component (onx)
-        #     -J_v1[0], # Y component is now the original X component (-(-ony) = ony)
-        #     0         # Z component remains 0
-        # ])
-        # J_v1 = J_v1_fixed # Test this swap
-
-        # J_w1 = z_0
-        # #########
-        
+       
         # Joint 2: Shoulder pitch
         J_v2 = np.cross(z_1, o_n - o1)
         J_w2 = z_1
