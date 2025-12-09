@@ -1,0 +1,80 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from openmx_interfaces/srv/EE2JointVel.srv
+// generated code does not contain a copyright notice
+
+
+module openmx_interfaces {
+  module srv {
+    @verbatim (language="comment", text=
+      "Service for converting end-effector velocities to joint velocities" "\n"
+      "Inverse velocity kinematics: q_dot = J^+(q) * V")
+    struct EE2JointVel_Request {
+      @verbatim (language="comment", text=
+        "Request: Joint configuration and desired end-effector velocity" "\n"
+        "Joint 1 position (rad)")
+      double q1;
+
+      @verbatim (language="comment", text=
+        "Joint 2 position (rad)")
+      double q2;
+
+      @verbatim (language="comment", text=
+        "Joint 3 position (rad)")
+      double q3;
+
+      @verbatim (language="comment", text=
+        "Joint 4 position (rad)")
+      double q4;
+
+      @verbatim (language="comment", text=
+        "Desired EE linear velocity x-component (m/s)")
+      double vx;
+
+      @verbatim (language="comment", text=
+        "Desired EE linear velocity y-component (m/s)")
+      double vy;
+
+      @verbatim (language="comment", text=
+        "Desired EE linear velocity z-component (m/s)")
+      double vz;
+
+      @verbatim (language="comment", text=
+        "Desired EE angular velocity x-component (rad/s)")
+      double wx;
+
+      @verbatim (language="comment", text=
+        "Desired EE angular velocity y-component (rad/s)")
+      double wy;
+
+      @verbatim (language="comment", text=
+        "Desired EE angular velocity z-component (rad/s)")
+      double wz;
+    };
+    struct EE2JointVel_Response {
+      @verbatim (language="comment", text=
+        "Response: Joint velocities" "\n"
+        "Joint 1 velocity (rad/s)")
+      double q1_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 2 velocity (rad/s)")
+      double q2_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 3 velocity (rad/s)")
+      double q3_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 4 velocity (rad/s)")
+      double q4_dot;
+
+      @verbatim (language="comment", text=
+        "True if computation succeeded")
+      boolean success;
+
+      @verbatim (language="comment", text=
+        "Status message or error description")
+      string message;
+    };
+  };
+};

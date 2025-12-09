@@ -1,0 +1,80 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from openmx_interfaces/srv/JointVel2EE.srv
+// generated code does not contain a copyright notice
+
+
+module openmx_interfaces {
+  module srv {
+    @verbatim (language="comment", text=
+      "Service for converting joint velocities to end-effector velocities" "\n"
+      "Forward velocity kinematics: V = J(q) * q_dot")
+    struct JointVel2EE_Request {
+      @verbatim (language="comment", text=
+        "Request: Joint configuration and joint velocities" "\n"
+        "Joint 1 position (rad)")
+      double q1;
+
+      @verbatim (language="comment", text=
+        "Joint 2 position (rad)")
+      double q2;
+
+      @verbatim (language="comment", text=
+        "Joint 3 position (rad)")
+      double q3;
+
+      @verbatim (language="comment", text=
+        "Joint 4 position (rad)")
+      double q4;
+
+      @verbatim (language="comment", text=
+        "Joint 1 velocity (rad/s)")
+      double q1_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 2 velocity (rad/s)")
+      double q2_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 3 velocity (rad/s)")
+      double q3_dot;
+
+      @verbatim (language="comment", text=
+        "Joint 4 velocity (rad/s)")
+      double q4_dot;
+    };
+    struct JointVel2EE_Response {
+      @verbatim (language="comment", text=
+        "Response: End-effector linear and angular velocities" "\n"
+        "EE linear velocity x-component (m/s)")
+      double vx;
+
+      @verbatim (language="comment", text=
+        "EE linear velocity y-component (m/s)")
+      double vy;
+
+      @verbatim (language="comment", text=
+        "EE linear velocity z-component (m/s)")
+      double vz;
+
+      @verbatim (language="comment", text=
+        "EE angular velocity x-component (rad/s)")
+      double wx;
+
+      @verbatim (language="comment", text=
+        "EE angular velocity y-component (rad/s)")
+      double wy;
+
+      @verbatim (language="comment", text=
+        "EE angular velocity z-component (rad/s)")
+      double wz;
+
+      @verbatim (language="comment", text=
+        "True if computation succeeded")
+      boolean success;
+
+      @verbatim (language="comment", text=
+        "Status message or error description")
+      string message;
+    };
+  };
+};

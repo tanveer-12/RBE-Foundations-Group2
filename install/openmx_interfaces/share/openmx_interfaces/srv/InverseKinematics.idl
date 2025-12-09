@@ -1,0 +1,30 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from openmx_interfaces/srv/InverseKinematics.srv
+// generated code does not contain a copyright notice
+
+#include "geometry_msgs/msg/Pose.idl"
+
+module openmx_interfaces {
+  module srv {
+    @verbatim (language="comment", text=
+      "Request: desired end effector pose")
+    struct InverseKinematics_Request {
+      geometry_msgs::msg::Pose pose;
+    };
+    struct InverseKinematics_Response {
+      @verbatim (language="comment", text=
+        "Response: joint angles (in degrees) and success flag")
+      boolean success;
+
+      string message;
+
+      double theta1;
+
+      double theta2;
+
+      double theta3;
+
+      double theta4;
+    };
+  };
+};
