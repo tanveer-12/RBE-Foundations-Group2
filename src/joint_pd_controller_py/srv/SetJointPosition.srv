@@ -1,0 +1,5 @@
+# Custom service for setting joint position reference
+float64 position
+---
+bool success
+string message

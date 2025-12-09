@@ -14,6 +14,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         # Include launch files
         (os.path.join('share', package_name), glob('launch/*launch.[pxy][yma]*')),
+        # Include service files
+        (os.path.join('share', package_name, 'srv'), glob('srv/*.srv')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +26,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'pd_controller_node = joint_pd_controller_py.main:main',
+            'pd_controller_node = joint_pd_controller_py.pd_controller:main',
+            'test_client = joint_pd_controller_py.test_client:main',
+            'plot_pd_results = joint_pd_controller_py.plot_pd_results:main',
         ],
     },
 )
