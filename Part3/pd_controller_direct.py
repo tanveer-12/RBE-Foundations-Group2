@@ -15,7 +15,7 @@ class PDControllerDirect(Node):
     def __init__(self):
         super().__init__('pd_controller_direct')
         
-        # Parameters
+        # Default parameters, can be overwritten by terminal commands
         self.declare_parameter('kp', 5.0)
         self.declare_parameter('kd', 0.5)
         self.declare_parameter('control_frequency', 100.0)
